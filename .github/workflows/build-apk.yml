@@ -31,13 +31,30 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android API 37
+      - name: Use preinstalled Android SDK and install API 37
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+          set -euo pipefail
+
+          ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          ANDROID_HOME="$ANDROID_SDK_ROOT"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found in $ANDROID_SDK_ROOT"
+            find "$ANDROID_SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
@@ -48,13 +65,16 @@ jobs:
         env:
           WTT_DEBUG_KEYSTORE_BASE64: ${{ secrets.WTT_DEBUG_KEYSTORE_BASE64 }}
         run: |
+          set -euo pipefail
+
           if [ -z "$WTT_DEBUG_KEYSTORE_BASE64" ]; then
             echo "::error::Missing repository secret WTT_DEBUG_KEYSTORE_BASE64"
-            echo "Add it in Settings -> Secrets and variables -> Actions -> New repository secret."
             exit 1
           fi
+
           mkdir -p "$HOME/.android"
           printf '%s' "$WTT_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+
           keytool -list \
             -keystore "$HOME/.android/debug.keystore" \
             -storepass android \
@@ -62,17 +82,20 @@ jobs:
 
       - name: Build debug APK
         working-directory: android-src
+        shell: bash
         run: |
           set +e
+
           gradle --no-daemon :app:assembleDebug --console=plain 2>&1 | tee build.log
           STATUS=${PIPESTATUS[0]}
 
           if [ "$STATUS" -ne 0 ]; then
             echo ""
             echo "========== BUILD ERROR =========="
-            grep -Ei -B 8 -A 20 "what went wrong|execution failed|could not|caused by|error:|^e:|requires.*compileSdk" build.log | tail -120 || true
+            grep -Ei -B 8 -A 25 "what went wrong|execution failed|could not|caused by|error:|^e:|requires.*compileSdk" build.log | tail -160 || true
             echo "================================="
           fi
+
           exit "$STATUS"
 
       - name: Upload APK
