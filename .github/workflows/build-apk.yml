@@ -29,8 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "========== POI SOURCE MATCHES =========="
-          grep -RInE "Загрузить подборку|Load collection|radius_m|article_url|ActivityResultContracts|интересн|places" android-src/app/src/main 2>/dev/null | head -300 || true
+          echo "========== DiscoveryStore.kt =========="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt | sed -n '1,220p'
+          echo "========== DiscoveryUi.kt ============="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt | sed -n '1,220p'
+          echo "========== MainActivity import ========="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/MainActivity.kt | sed -n '70,115p'
           echo "========================================"
 
       - name: Set up Java 17
