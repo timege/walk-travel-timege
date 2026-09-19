@@ -1,18 +1,40 @@
 --- /dev/null
 +++ b/PENDING_CHANGES.md
-@@ -0,0 +1,12 @@
-+# Pending changes after 0.9.5 — not compiled
+@@ -0,0 +1,34 @@
++# Walk Travel Timege 0.9.6 (45) — draft, NOT compiled
 +
-+- The places list shows a plain title for unvisited places and a check mark for visited places. Map markers retain ? / ✓.
-+- All catalog places get a 75-metre transparent preview with a soft outer edge (up to 10 metres). The preview is only part of the fog bitmap and never changes visits, recorded walks, explored territory, or discovery radius.
-+- Preview centers refresh on initial load, file import, website sync, clear-all, backup restore, and resume. Deleted places lose their preview; genuinely walked areas remain.
-+- Preview circles share the existing cached mask and its pan/zoom/rotation transform; points outside the cache are skipped. No fixed screen-pixel minimum is used for these circles.
++## New changes since the last delivered APK (0.9.5)
++1. Plain article titles in the places list. Visited places retain ✓. Map markers remain ? / ✓; no clustering added.
++2. A 75-metre transparent preview around every catalog place, with an outer feather of at most 10 metres. Geographic radius, no screen-pixel minimum. Import/sync/clear/restore refresh the previews. They are visual hints only: no exploration or discovery credit.
++3. Ocean water stays visible through the fog using the ocean polygons in the map's OpenMapTiles water layer. Inland water is not automatically revealed. Polygon holes preserve islands. Loaded offline tiles supply the same ocean geometry. Unknown/uncached areas still require map data to show their coastline.
++4. One map style: Liberty. The normal/light selector and the old preference are no longer used.
++5. Offline maps screen: name and download the visible map area (zoom levels 0–16), view actual downloaded MB and progress, pause/resume, show a saved area, delete with confirmation. Saved regions use MapLibre's persistent offline database.
++6. Downloads run while the app is visible, pause on leaving, and can be resumed later or after restart. Only one download is active at a time. Completed status requires a precise non-zero resource count. Network errors pause the region. Very large selections and critically low storage are rejected/paused.
++7. Offline access does not mark the land explored. Walks, POIs and GPX storage are separate from offline-map deletion.
 +
-+Compilation and main-branch updates require the user's explicit confirmation. Do not dispatch a workflow or move this draft to main yet.
++## Already included from 0.9.4–0.9.5
++- Home-screen widget and clear-all places with confirmation.
++- Samui article titles visible before a visit and correction of old imported names by article URL (60 points / 27 articles); same IDs and discovery history.
++- Glossy sky-blue GPS position marker with white rim, highlight, halo and shadow.
 +
-+Unresolved discussion: visible sea/coastline, grouping crowded map markers, whether both map styles are useful, and offline maps. These are not implemented in this draft.
++## Product limits
++- Downloaded regions include the map and its style resources. Online place search, new route calculation, external article/photo loading still need internet. GPS recording, saved places, opened progress and imported GPX remain local.
++- No background-download service. Leaving the app pauses downloads; completed maps stay available.
++- Download selection crossing the date line or covering too much land asks the user to choose a smaller area.
 +
-+Validation: source/diff review only. Not compiled or tested on Android.
++## Validation performed without compilation
++- Reviewed MapLibre 13.6.1 public API signatures for source queries and offline callbacks.
++- Reviewed callback/lifecycle handling, stale asynchronous results, completion states, pause/resume and deletion isolation.
++- Parsed Android XML and checked patch reconstruction against the source tree.
++- Android compilation, emulator/device checks, flight-mode download/restart/delete testing and sea rendering verification are NOT done yet. They require the user's build approval.
++
++## Build gate
++Do NOT dispatch GitHub Actions or update main until the user explicitly approves compilation. Changes are kept on draft/poi-preview-75m; main remains the last delivered 0.9.5 APK source.
++
++## References
++- https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android.offline/-offline-region/index.html
++- https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android.style.sources/-vector-source/query-source-features.html
++- https://github.com/openmaptiles/openmaptiles/blob/master/layers/water/water.yaml
 --- a/README.md
 +++ b/README.md
 @@ -1,3 +1,10 @@
@@ -69,6 +91,21 @@
 +- Previously imported Samui names are corrected from the saved article-title export by article URL. Place IDs, coordinates, and discovery history are preserved; no places are added.
 +- GPS position marker is sky blue with a glossy highlight, white rim, blue halo, and a soft shadow. The sprite remains cached.
 +- Map styles and fog reveal rules are unchanged. Water visibility and 50 m previews remain proposals.
+--- /dev/null
++++ b/RELEASE_0.9.6.md
+@@ -0,0 +1,12 @@
++# Walk Travel Timege 0.9.6 (45) — pending build approval
++
++- One Liberty map style.
++- Ocean and coast visible through fog, based on the map's ocean polygons.
++- 75 m map previews around points of interest, separate from explored progress.
++- No question-mark prefix in the places list; visited items retain a check mark.
++- Offline area downloads with names, progress, downloaded size, pause/resume and deletion.
++- Foreground-only downloading with persistent partial/completed regions.
++- No clustering of POIs.
++
++Source prepared only. Not compiled or tested on an Android device.
++See PENDING_CHANGES.md for the full change list, validation status and limits.
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,8 +10,8 @@
@@ -77,14 +114,22 @@
          targetSdk = 36
 -        versionCode = 41
 -        versionName = "0.9.2"
-+        versionCode = 44
-+        versionName = "0.9.5"
++        versionCode = 45
++        versionName = "0.9.6"
      }
  
      // Always use the persistent debug keystore restored by GitHub Actions.
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -27,6 +27,17 @@
+@@ -2,6 +2,7 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+     <uses-permission android:name="android.permission.INTERNET" />
++    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+@@ -27,6 +28,17 @@
              </intent-filter>
          </activity>
  
@@ -261,19 +306,26 @@
          roundCard(dialog)
 --- a/app/src/main/java/com/lifeinmist/app/FogOverlay.kt
 +++ b/app/src/main/java/com/lifeinmist/app/FogOverlay.kt
-@@ -41,6 +41,8 @@
+@@ -41,6 +41,9 @@
      private var trackSegments: Collection<List<TrackPoint>> = emptyList()
      private var trackChunks: List<List<TrackChunk>> = emptyList()
      private var currentLocation: LatLng? = null
 +    // Visual hints only. These centers never enter track data or the progress database.
 +    private var placePreviewCenters: List<LatLng> = emptyList()
++    private var seaPolygons: List<SeaPolygon> = emptyList()
  
      private var cacheBitmap: Bitmap? = null
      private var spareBitmap: Bitmap? = null
-@@ -186,6 +188,13 @@
+@@ -186,6 +189,19 @@
          markDirty()
      }
  
++    fun setSeaPolygons(polygons: List<SeaPolygon>) {
++        if (seaPolygons == polygons) return
++        seaPolygons = polygons
++        markDirty()
++    }
++
 +    fun setPlacePreviews(places: List<DiscoveryPlace>) {
 +        val centers = places.map { LatLng(it.lat, it.lon) }
 +        if (placePreviewCenters == centers) return
@@ -284,18 +336,44 @@
      fun setCurrentLocation(location: LatLng?) {
          if (currentLocation == location) return
          currentLocation = location
-@@ -371,6 +380,7 @@
+@@ -370,7 +386,9 @@
+ 
          // This canvas already targets an isolated bitmap; an extra layer doubles work.
          drawUniformMask(offscreen, cacheW, cacheH)
++        drawSeaOpenings(offscreen, currentMap, cacheW, cacheH)
          if (track.isNotEmpty()) drawExploredRoutes(offscreen, currentMap, cacheW, cacheH)
 +        drawPlacePreviews(offscreen, currentMap, cacheW, cacheH)
          currentLocation?.let { drawTemporaryOpening(offscreen, currentMap, it, cacheW, cacheH) }
  
          val old = cacheBitmap
-@@ -437,6 +447,29 @@
+@@ -437,6 +455,53 @@
                  val p = screenToCache(screen.x, screen.y, cacheW, cacheH)
                  clearCircle(canvas, p.first, p.second, representativeRadiusPx)
              }
++        }
++    }
++
++    private fun drawSeaOpenings(canvas: Canvas, currentMap: MapLibreMap, cacheW: Int, cacheH: Int) {
++        val targetLongitude = currentMap.cameraPosition.target?.longitude ?: return
++        for (polygon in seaPolygons) {
++            // Separate paths preserve islands (inner rings) and avoid cancelling
++            // overlapping ocean polygons at vector-tile boundaries.
++            val path = Path().apply { fillType = Path.FillType.EVEN_ODD }
++            for (ring in polygon.rings) {
++                if (ring.size < 3) continue
++                var previousLongitude = targetLongitude
++                ring.forEachIndexed { index, point ->
++                    val longitude = point.longitude + 360.0 * kotlin.math.round(
++                        (previousLongitude - point.longitude) / 360.0)
++                    previousLongitude = longitude
++                    val screen = currentMap.projection.toScreenLocation(LatLng(point.latitude, longitude))
++                    val x = (screen.x - cacheOriginX) * CACHE_PIXEL_SCALE + cacheW / 2f
++                    val y = (screen.y - cacheOriginY) * CACHE_PIXEL_SCALE + cacheH / 2f
++                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
++                }
++                path.close()
++            }
++            canvas.drawPath(path, clearCirclePaint)
 +        }
 +    }
 +
@@ -322,7 +400,7 @@
          }
      }
  
-@@ -464,12 +497,12 @@
+@@ -464,12 +529,12 @@
          return cx to cy
      }
  
@@ -337,7 +415,7 @@
          }
          canvas.drawCircle(x, y, radius, clearCirclePaint)
          softCirclePaint.alpha = 255
-@@ -485,6 +518,8 @@
+@@ -485,6 +550,8 @@
      companion object {
          private const val REVEAL_RADIUS_M = 30.0
          private const val CURRENT_OPENING_RADIUS_M = 44.0
@@ -357,7 +435,17 @@
                      Toast.makeText(this, result.fold({ tr("Places imported: $it", "Загружено мест: $it") }, {
                          tr("Could not import places. Check the file format.", "Не удалось загрузить места. Проверьте формат файла.")
                      }), Toast.LENGTH_LONG).show()
-@@ -174,7 +174,7 @@
+@@ -120,7 +120,8 @@
+     private var currentAccuracyM: Float = 0f
+     private var destination: SearchPlace? = null
+     private var routePoints: List<LatLng> = emptyList()
+-    private var selectedMapStyle = 0
++    private lateinit var offlineMaps: OfflineMapsUi
++    private var seaReveal: SeaRevealController? = null
+     private var pendingStartAfterPermission = false
+     private var routeBuilding = false
+     private var routeDistanceM: Double = 0.0
+@@ -174,7 +175,7 @@
                      val persistedExplored = database.exploredPoints()
                      refreshClouds(reset = true)
                      cloudOverlay.postInvalidateOnAnimation()
@@ -366,7 +454,15 @@
                      navigationOverlay.postInvalidateOnAnimation()
                      if (persistedExplored.isNotEmpty()) focusOnExploredArea()
                      Toast.makeText(
-@@ -243,8 +243,9 @@
+@@ -235,17 +236,17 @@
+         MapLibre.getInstance(this)
+         database = MistDatabase(this)
+         tracking = database.activeWalk() != null
+-        selectedMapStyle = getSharedPreferences("ui", MODE_PRIVATE).getInt("mapStyle", 0)
+-            .coerceIn(0, MAP_STYLES.lastIndex)
+ 
+         buildUi(savedInstanceState)
+         discoveryUi = DiscoveryUi(this, { currentLocation }, { place, title ->
              selectDestination(SearchPlace(title, place.lat, place.lon))
          }, { place ->
              map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(place.lat, place.lon), 16.0))
@@ -375,8 +471,10 @@
          discoveryOverlay.onPlaceClick = { discoveryUi.showCard(it) }
 +        refreshPlaces()
          gpxUi = GpxUi(this, ::showImportedRoute)
++        offlineMaps = OfflineMapsUi(this, { map }, MAP_STYLE_URL)
          val retained = lastCustomNonConfigurationInstance as? RetainedMapState
          if (retained == null) gpxUi.restoreRoute() else {
+             destination = retained.destination
 @@ -263,6 +264,7 @@
          updateUiState()
          discoveryUi.sync()
@@ -385,7 +483,71 @@
      }
  
      private fun buildUi(savedInstanceState: Bundle?) {
-@@ -685,6 +687,7 @@
+@@ -596,6 +598,11 @@
+             cloudOverlay.map = readyMap
+             navigationOverlay.map = readyMap
+             discoveryOverlay.map = readyMap
++            seaReveal?.close()
++            seaReveal = SeaRevealController(readyMap, cloudOverlay)
++            mapView.addOnDidFinishRenderingMapListener { fully ->
++                if (fully) seaReveal?.requestRefresh()
++            }
+             readyMap.addOnMapClickListener { discoveryOverlay.handleMapClick(it) }
+             readyMap.uiSettings.isRotateGesturesEnabled = true
+             readyMap.uiSettings.isCompassEnabled = false // Our compass is already at bottom right.
+@@ -603,12 +610,14 @@
+             applyMapStyle(initial = true)
+             readyMap.addOnCameraMoveListener {
+                 cloudOverlay.onCameraMove()
++                seaReveal?.onCameraMove()
+                 discoveryOverlay.invalidate()
+                 navigationOverlay.invalidate()
+                 updateCompass()
+             }
+             readyMap.addOnCameraIdleListener {
+                 cloudOverlay.onCameraIdle()
++                seaReveal?.onCameraIdle()
+                 discoveryOverlay.invalidate()
+                 navigationOverlay.onCameraIdle()
+             }
+@@ -617,7 +626,7 @@
+ 
+     private fun applyMapStyle(initial: Boolean = false) {
+         val readyMap = map ?: return
+-        readyMap.setStyle(MAP_STYLES[selectedMapStyle].second) {
++        readyMap.setStyle(MAP_STYLE_URL) {
+             if (initial) {
+                 readyMap.cameraPosition = restoredCamera ?: CameraPosition.Builder()
+                     .target(LatLng(20.0, 0.0))
+@@ -625,6 +634,7 @@
+                     .build()
+             }
+             refreshClouds()
++            seaReveal?.requestRefresh()
+             navigationOverlay.setCurrentLocation(currentLocation)
+             navigationOverlay.setDestination(destination?.let { LatLng(it.lat, it.lon) })
+             if (!importedRoute) navigationOverlay.setRoute(routePoints)
+@@ -652,8 +662,7 @@
+ 
+     private fun showMapMenu(anchor: View) {
+         PopupMenu(this, anchor).apply {
+-            menu.add(0, MENU_MAP_NORMAL, 0, if (selectedMapStyle == 0) tr("✓ Map: standard", "✓ Карта: обычная") else tr("Map: standard", "Карта: обычная"))
+-            menu.add(0, MENU_MAP_LIGHT, 1, if (selectedMapStyle == 1) tr("✓ Map: light", "✓ Карта: светлая") else tr("Map: light", "Карта: светлая"))
++            menu.add(0, MENU_OFFLINE_MAPS, 0, tr("Offline maps", "Офлайн-карты"))
+             menu.add(0, MENU_BACKUP_EXPORT, 3, tr("Back up progress", "Сохранить прогресс"))
+             menu.add(0, MENU_BACKUP_IMPORT, 4, tr("Restore progress", "Восстановить прогресс"))
+             menu.add(0, MENU_GPX_EXPORT, 5, tr("Export GPX", "Экспорт GPX"))
+@@ -662,8 +671,7 @@
+             menu.add(0, MENU_LANGUAGE, 8, tr("Language", "Язык"))
+             setOnMenuItemClickListener { item ->
+                 when (item.itemId) {
+-                    MENU_MAP_NORMAL -> setMapStyle(0)
+-                    MENU_MAP_LIGHT -> setMapStyle(1)
++                    MENU_OFFLINE_MAPS -> offlineMaps.show()
+                     MENU_BACKUP_EXPORT -> exportProgressBackup()
+                     MENU_BACKUP_IMPORT -> importProgressBackup()
+                     MENU_GPX_EXPORT -> gpxUi.exportWalk()
+@@ -685,6 +693,7 @@
                  if ((index == 1) != AppLanguage.isRussian) {
                      AppLanguage.select(this, index == 1)
                      if (tracking) startService(Intent(this, TrackingService::class.java).setAction(TrackingService.ACTION_LANGUAGE))
@@ -393,7 +555,7 @@
                      recreate()
                  }
              }.setNegativeButton(tr("Cancel", "Отмена"), null).show()
-@@ -928,6 +931,13 @@
+@@ -928,6 +937,13 @@
          DiscoveryStore.get(this).place(id)?.let { discoveryUi.showCard(it) }
      }
  
@@ -407,7 +569,21 @@
      private fun formatDuration(durationMs: Long): String {
          val positive = durationMs.coerceAtLeast(0L)
          val minutes = if (positive == 0L) 0 else ((positive + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
-@@ -1060,6 +1070,11 @@
+@@ -957,13 +973,6 @@
+         parent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+     }
+ 
+-    private fun setMapStyle(index: Int) {
+-        if (index !in MAP_STYLES.indices || index == selectedMapStyle) return
+-        selectedMapStyle = index
+-        getSharedPreferences("ui", MODE_PRIVATE).edit().putInt("mapStyle", selectedMapStyle).apply()
+-        applyMapStyle()
+-    }
+-
+     private fun exportProgressBackup() {
+         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+         exportProgressLauncher.launch("walk-travel-timege-progress-$date.json")
+@@ -1060,6 +1069,11 @@
          cloudOverlay.setCurrentLocation(position)
          navigationOverlay.setCurrentLocation(position)
          if (follow) map?.animateCamera(CameraUpdateFactory.newLatLngZoom(position, 16.2))
@@ -419,7 +595,14 @@
      }
  
      private fun refreshClouds(reset: Boolean = false) {
-@@ -1605,6 +1620,7 @@
+@@ -1599,12 +1613,14 @@
+         super.onStart()
+         isVisible = true
+         mapView.onStart()
++        offlineMaps.onStart()
+     }
+ 
+     override fun onNewIntent(intent: Intent) {
          super.onNewIntent(intent)
          setIntent(intent)
          handleDiscoveryIntent(intent)
@@ -436,7 +619,25 @@
          if (pendingWalkSummaryId > 0) {
              val id = pendingWalkSummaryId
              pendingWalkSummaryId = -1L
-@@ -1664,6 +1680,7 @@
+@@ -1629,6 +1645,7 @@
+     }
+ 
+     override fun onStop() {
++        offlineMaps.onStop()
+         isVisible = false
+         discoveryPopup?.dismiss()
+         discoveryPopup = null
+@@ -1642,6 +1659,9 @@
+     }
+ 
+     override fun onDestroy() {
++        offlineMaps.close()
++        seaReveal?.close()
++        seaReveal = null
+         gpxUi.close()
+         progressDisposed = true
+         // Close after any queued read; never close a database being used by the worker.
+@@ -1664,21 +1684,18 @@
      }
  
      companion object {
@@ -444,6 +645,23 @@
          @Volatile var isVisible: Boolean = false
              private set
          private const val REQUEST_LOCATION = 7001
+         private const val REQUEST_NOTIFICATIONS = 7002
+-        private const val MENU_MAP_NORMAL = 7101
+-        private const val MENU_MAP_LIGHT = 7102
++        private const val MENU_OFFLINE_MAPS = 7101
+         private const val MENU_BACKUP_EXPORT = 7103
+         private const val MENU_BACKUP_IMPORT = 7104
+         private const val MENU_GPX_EXPORT = 7105
+         private const val MENU_GPX_IMPORT = 7106
+         private const val MENU_ABOUT = 7107
+         private const val MENU_LANGUAGE = 7108
+-        private val MAP_STYLES = listOf(
+-            "Standard" to "https://tiles.openfreemap.org/styles/liberty",
+-            "Light" to "https://tiles.openfreemap.org/styles/bright"
+-        )
++        private const val MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+     }
+ }
 --- a/app/src/main/java/com/lifeinmist/app/MistDatabase.kt
 +++ b/app/src/main/java/com/lifeinmist/app/MistDatabase.kt
 @@ -544,6 +544,18 @@
@@ -516,6 +734,506 @@
      }
  
      private fun drawDestination(canvas: Canvas, currentMap: MapLibreMap, location: LatLng) {
+--- /dev/null
++++ b/app/src/main/java/com/lifeinmist/app/OfflineMapsUi.kt
+@@ -0,0 +1,428 @@
++package com.lifeinmist.app
++
++import android.graphics.Color
++import android.graphics.drawable.GradientDrawable
++import android.os.Handler
++import android.os.Looper
++import android.os.StatFs
++import android.text.InputFilter
++import android.view.View
++import android.view.ViewGroup
++import android.widget.Button
++import android.widget.EditText
++import android.widget.LinearLayout
++import android.widget.ProgressBar
++import android.widget.ScrollView
++import android.widget.TextView
++import android.widget.Toast
++import androidx.appcompat.app.AlertDialog
++import androidx.appcompat.app.AppCompatActivity
++import org.json.JSONObject
++import org.maplibre.android.camera.CameraUpdateFactory
++import org.maplibre.android.geometry.LatLngBounds
++import org.maplibre.android.maps.MapLibreMap
++import org.maplibre.android.offline.OfflineManager
++import org.maplibre.android.offline.OfflineRegion
++import org.maplibre.android.offline.OfflineRegionError
++import org.maplibre.android.offline.OfflineRegionStatus
++import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
++import java.text.SimpleDateFormat
++import java.util.Date
++import kotlin.math.PI
++import kotlin.math.floor
++import kotlin.math.ln
++import kotlin.math.pow
++import kotlin.math.tan
++
++/** Explicit region downloads in MapLibre's persistent offline database, separate from walk progress. */
++class OfflineMapsUi(
++    private val activity: AppCompatActivity,
++    private val map: () -> MapLibreMap?,
++    private val styleUrl: String
++) {
++    private class Entry(val region: OfflineRegion, val name: String) {
++        var status: OfflineRegionStatus? = null
++        var active = false
++        var deleting = false
++        var error = false
++        var statusView: TextView? = null
++        var progressView: ProgressBar? = null
++        var toggleView: Button? = null
++    }
++
++    private val manager = OfflineManager.getInstance(activity.applicationContext)
++    private val entries = linkedMapOf<Long, Entry>()
++    private val handler = Handler(Looper.getMainLooper())
++    private var dialog: AlertDialog? = null
++    private var content: LinearLayout? = null
++    private var loaded = false
++    private var loading = false
++    private var creating = false
++    private var closed = false
++    private var foreground = false
++    private var updateScheduled = false
++    private val updateRows = Runnable {
++        updateScheduled = false
++        if (!closed) entries.values.forEach(::updateRow)
++    }
++
++    fun onStart() { foreground = true; scheduleUpdate() }
++
++    fun onStop() {
++        foreground = false
++        entries.values.filter { it.active }.forEach(::pause)
++    }
++
++    fun close() {
++        onStop()
++        closed = true
++        handler.removeCallbacks(updateRows)
++        entries.values.forEach { it.region.setObserver(null) }
++        dialog?.dismiss()
++        dialog = null
++        content = null
++        entries.values.forEach { it.statusView = null; it.progressView = null; it.toggleView = null }
++    }
++
++    fun show() {
++        if (closed || activity.isFinishing) return
++        dialog?.dismiss()
++        val column = LinearLayout(activity).apply {
++            orientation = LinearLayout.VERTICAL
++            setPadding(dp(20), dp(8), dp(20), dp(16))
++        }
++        content = column
++        val shown = AlertDialog.Builder(activity)
++            .setTitle(tr("Offline maps", "Офлайн-карты"))
++            .setView(ScrollView(activity).apply { addView(column) })
++            .setNegativeButton(tr("Close", "Закрыть"), null).create()
++        dialog = shown
++        shown.setOnDismissListener {
++            if (dialog === shown) {
++                dialog = null; content = null
++                entries.values.forEach { it.statusView = null; it.progressView = null; it.toggleView = null }
++            }
++        }
++        renderList()
++        shown.show()
++        shown.window?.setBackgroundDrawable(cardBackground())
++        // Re-enumerate on opening as a pending native create may have finished
++        // after the previous Activity was destroyed during rotation.
++        loadRegions()
++    }
++
++    private fun loadRegions() {
++        if (loading || closed) return
++        loading = true
++        manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
++            override fun onList(offlineRegions: Array<OfflineRegion>?) {
++                if (closed) return
++                loading = false; loaded = true
++                for (region in offlineRegions.orEmpty()) {
++                    // Own only regions created by this screen.
++                    val metadata = runCatching { JSONObject(String(region.metadata, Charsets.UTF_8)) }.getOrNull() ?: continue
++                    if (metadata.optString("owner") != OWNER || entries.containsKey(region.id)) continue
++                    addRegion(region, metadata.optString("name", tr("Saved area", "Сохранённая область")))
++                }
++                renderList()
++            }
++            override fun onError(error: String) {
++                if (closed) return
++                loading = false
++                renderList()
++                toast(tr("Could not load saved maps. Try again.", "Не удалось открыть список карт. Попробуйте ещё раз."))
++            }
++        })
++    }
++
++    private fun addRegion(region: OfflineRegion, name: String): Entry {
++        entries[region.id]?.let { return it }
++        val entry = Entry(region, name)
++        entries[region.id] = entry
++        observe(entry)
++        readStatus(entry)
++        return entry
++    }
++
++    private fun isCurrent(entry: Entry): Boolean = !closed && !entry.deleting && entries[entry.region.id] === entry
++
++    private fun observe(entry: Entry) {
++        entry.region.setObserver(object : OfflineRegion.OfflineRegionObserver {
++            override fun onStatusChanged(status: OfflineRegionStatus) {
++                if (!isCurrent(entry)) return
++                acceptStatus(entry, status)
++            }
++            override fun onError(error: OfflineRegionError) {
++                if (!isCurrent(entry)) return
++                entry.error = true
++                pause(entry)
++                scheduleUpdate()
++            }
++            override fun mapboxTileCountLimitExceeded(limit: Long) {
++                if (!isCurrent(entry)) return
++                entry.error = true
++                pause(entry)
++                toast(tr("This area is too large. Download a smaller area.", "Область слишком большая. Выберите меньший участок."))
++            }
++        })
++    }
++
++    private fun readStatus(entry: Entry) {
++        entry.region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
++            override fun onStatus(status: OfflineRegionStatus?) {
++                if (isCurrent(entry) && status != null) acceptStatus(entry, status)
++            }
++            override fun onError(error: String?) {
++                if (isCurrent(entry)) { entry.error = true; scheduleUpdate() }
++            }
++        })
++    }
++
++    private fun complete(status: OfflineRegionStatus?): Boolean = status != null &&
++        status.isRequiredResourceCountPrecise && status.requiredResourceCount > 0 && status.isComplete
++
++    private fun acceptStatus(entry: Entry, status: OfflineRegionStatus) {
++        entry.status = status
++        if (complete(status)) {
++            val wasActive = entry.active
++            entry.error = false
++            pause(entry)
++            if (wasActive && foreground) toast(tr("Map saved: ${entry.name}", "Карта сохранена: ${entry.name}"))
++        } else if (entry.active && activity.filesDir.usableSpace < FREE_SPACE_RESERVE) {
++            entry.error = true
++            pause(entry)
++            if (foreground) toast(tr("Not enough free space. Download paused.", "Мало свободной памяти. Загрузка приостановлена."))
++        }
++        scheduleUpdate()
++    }
++
++    private fun pause(entry: Entry) {
++        if (entry.active) {
++            entry.active = false
++            entry.region.setDownloadState(OfflineRegion.STATE_INACTIVE)
++        }
++        scheduleUpdate()
++    }
++
++    private fun resume(entry: Entry) {
++        if (!foreground || !isCurrent(entry) || complete(entry.status)) return
++        if (StatFs(activity.filesDir.absolutePath).availableBytes < FREE_SPACE_RESERVE) {
++            toast(tr("Free some storage before downloading.", "Освободите память перед загрузкой.")); return
++        }
++        entries.values.filter { it !== entry && it.active }.forEach(::pause)
++        entry.error = false
++        entry.active = true
++        entry.region.setDownloadState(OfflineRegion.STATE_ACTIVE)
++        scheduleUpdate()
++    }
++
++    private fun renderList() {
++        val parent = content ?: return
++        parent.removeAllViews()
++        label(parent, tr(
++            "Position the map over the area you need, then download it here. Downloads pause when you leave the app; you can continue later. Saved maps work without internet.",
++            "Расположите нужную область на экране карты и загрузите её здесь. При выходе из приложения загрузка встаёт на паузу — её можно продолжить позже. Скачанные карты работают без интернета."))
++        label(parent, tr(
++            "Place search, new walking routes, articles and photos still need internet. GPS, recorded walks, saved places and imported GPX remain available offline.",
++            "Поиск мест, построение новых маршрутов, статьи и фото требуют интернета. GPS, запись прогулок, сохранённые точки и импортированный GPX доступны офлайн."), 12f)
++        button(parent, tr("Download visible area", "Скачать область на экране")) { confirmDownload() }.isEnabled = loaded && !creating
++        if (!loaded) {
++            label(parent, if (loading) tr("Loading saved maps…", "Загружаем список карт…") else tr("Saved maps are not loaded yet.", "Список карт пока не загружен."))
++            button(parent, tr("Refresh list", "Обновить список")) { loadRegions() }
++        } else if (entries.isEmpty()) {
++            label(parent, tr("No offline areas yet.", "Скачанных областей пока нет."))
++        }
++        for (entry in entries.values) {
++            val row = LinearLayout(activity).apply {
++                orientation = LinearLayout.VERTICAL
++                setPadding(dp(12), dp(10), dp(12), dp(12))
++                background = cardBackground()
++            }
++            parent.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
++            label(row, entry.name, 17f).typeface = AppTypography.emphasis
++            entry.statusView = label(row, "", 13f)
++            entry.progressView = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
++                max = 100
++                row.addView(this, LinearLayout.LayoutParams(-1, dp(6)).apply { bottomMargin = dp(6) })
++            }
++            entry.toggleView = button(row, "") { if (entry.active) pause(entry) else resume(entry) }
++            button(row, tr("Show on map", "Показать на карте")) {
++                val bounds = entry.region.definition.bounds ?: return@button
++                dialog?.dismiss()
++                map()?.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, dp(30)))
++            }
++            button(row, tr("Delete downloaded map", "Удалить скачанную карту")) { confirmDelete(entry) }
++            updateRow(entry)
++        }
++    }
++
++    private fun scheduleUpdate() {
++        if (closed || updateScheduled) return
++        updateScheduled = true
++        handler.postDelayed(updateRows, 300)
++    }
++
++    private fun updateRow(entry: Entry) {
++        val status = entry.status
++        val done = complete(status)
++        val percent = if (status != null && status.isRequiredResourceCountPrecise && status.requiredResourceCount > 0)
++            (100.0 * status.completedResourceCount / status.requiredResourceCount).toInt().coerceIn(0, if (done) 100 else 99) else null
++        val size = String.format(AppLanguage.locale, "%.1f", (status?.completedResourceSize ?: 0L) / 1_048_576.0)
++        val state = when {
++            entry.deleting -> tr("Deleting…", "Удаляем…")
++            done -> tr("Ready offline", "Доступна офлайн")
++            entry.error -> tr("Paused — check internet or free space", "Пауза — проверьте интернет и свободную память")
++            entry.active -> tr("Downloading", "Загрузка")
++            else -> tr("Paused", "На паузе")
++        }
++        entry.statusView?.text = "$state · $size ${tr("MB", "МБ")}" + (percent?.let { " · $it%" } ?: "")
++        entry.progressView?.apply {
++            isIndeterminate = entry.active && percent == null
++            if (percent != null) progress = percent
++            visibility = if (done) View.GONE else View.VISIBLE
++        }
++        entry.toggleView?.apply {
++            text = if (entry.active) tr("Pause", "Пауза") else tr("Continue download", "Продолжить загрузку")
++            visibility = if (done) View.GONE else View.VISIBLE
++            isEnabled = !entry.deleting && foreground
++        }
++    }
++
++    private fun confirmDownload() {
++        if (closed || creating || !foreground) return
++        val currentMap = map() ?: return
++        if (currentMap.style?.isFullyLoaded != true) {
++            toast(tr("Wait for the map to load first.", "Дождитесь загрузки карты.")); return
++        }
++        val bounds = currentMap.projection.visibleRegion.latLngBounds
++        val tiles = estimateTiles(bounds)
++        if (tiles == null || tiles > MAX_TILE_ESTIMATE) {
++            toast(tr("Zoom in and choose a smaller area to download.", "Приблизьте карту и выберите меньшую область для загрузки.")); return
++        }
++        dialog?.dismiss()
++        val form = LinearLayout(activity).apply {
++            orientation = LinearLayout.VERTICAL
++            setPadding(dp(22), dp(6), dp(22), dp(12))
++        }
++        val stamp = SimpleDateFormat("dd.MM HH:mm", AppLanguage.locale).format(Date())
++        val name = EditText(activity).apply {
++            setSingleLine(true)
++            filters = arrayOf(InputFilter.LengthFilter(60))
++            setText(tr("Map $stamp", "Карта $stamp"))
++            selectAll()
++            form.addView(this, LinearLayout.LayoutParams(-1, -2))
++        }
++        label(form, tr(
++            "Save the area currently visible on the map, including street detail. The download uses internet; its actual size will appear during downloading.",
++            "Сохранить область, которая сейчас видна на карте, с детализацией до улиц. Загрузка использует интернет; фактический размер появится в процессе."))
++        val confirm = AlertDialog.Builder(activity).setTitle(tr("Save map", "Скачать карту"))
++            .setView(form).setNegativeButton(tr("Cancel", "Отмена"), null)
++            .setPositiveButton(tr("Download", "Скачать"), null).create()
++        confirm.setOnShowListener {
++            confirm.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
++                val title = name.text.toString().trim()
++                if (title.isEmpty()) { name.error = tr("Enter a name", "Введите название"); return@setOnClickListener }
++                confirm.dismiss()
++                createRegion(title, bounds)
++            }
++        }
++        confirm.show()
++    }
++
++    private fun createRegion(name: String, bounds: LatLngBounds) {
++        if (closed || creating || !foreground) return
++        if (activity.filesDir.usableSpace < FREE_SPACE_RESERVE) {
++            toast(tr("Free some storage before downloading.", "Освободите память перед загрузкой.")); return
++        }
++        creating = true
++        val definition = OfflineTilePyramidRegionDefinition(styleUrl, bounds, 0.0, MAX_ZOOM.toDouble(),
++            activity.resources.displayMetrics.density, false)
++        val metadata = JSONObject().put("owner", OWNER).put("name", name).put("created_at", System.currentTimeMillis())
++            .toString().toByteArray(Charsets.UTF_8)
++        manager.createOfflineRegion(definition, metadata, object : OfflineManager.CreateOfflineRegionCallback {
++            override fun onCreate(offlineRegion: OfflineRegion) {
++                creating = false
++                if (closed) { offlineRegion.setDownloadState(OfflineRegion.STATE_INACTIVE); return }
++                val entry = addRegion(offlineRegion, name)
++                if (foreground) { resume(entry); show() }
++            }
++            override fun onError(error: String) {
++                creating = false
++                if (!closed && foreground) { toast(tr("Could not create the download. Try again.", "Не удалось начать загрузку. Попробуйте ещё раз.")); show() }
++            }
++        })
++    }
++
++    private fun confirmDelete(entry: Entry) {
++        if (!isCurrent(entry)) return
++        AlertDialog.Builder(activity).setTitle(tr("Delete ${entry.name}?", "Удалить «${entry.name}»?"))
++            .setMessage(tr("Only this downloaded map will be removed. Your walks, places and explored progress stay saved.",
++                "Удалится только скачанная карта. Прогулки, интересные места и прогресс останутся."))
++            .setNegativeButton(tr("Cancel", "Отмена"), null)
++            .setPositiveButton(tr("Delete", "Удалить")) { _, _ ->
++                if (!isCurrent(entry)) return@setPositiveButton
++                pause(entry)
++                entry.deleting = true
++                entry.region.setObserver(null)
++                updateRow(entry)
++                entry.region.delete(object : OfflineRegion.OfflineRegionDeleteCallback {
++                    override fun onDelete() {
++                        if (closed) return
++                        entries.remove(entry.region.id)
++                        renderList()
++                    }
++                    override fun onError(error: String) {
++                        if (closed) return
++                        entry.deleting = false
++                        observe(entry)
++                        renderList()
++                        toast(tr("Could not delete this map. Try again.", "Не удалось удалить карту. Попробуйте ещё раз."))
++                    }
++                })
++            }.show()
++    }
++
++    /** Conservative single-source tile estimate; avoids accidentally downloading a continent. */
++    private fun estimateTiles(bounds: LatLngBounds): Long? {
++        val west = bounds.longitudeWest; val east = bounds.longitudeEast
++        val north = bounds.latitudeNorth; val south = bounds.latitudeSouth
++        if (west < -180 || east > 180 || west >= east || east - west > 180 || south >= north || south < -85 || north > 85) return null
++        var total = 0L
++        for (zoom in 0..MAX_ZOOM) {
++            val n = 2.0.pow(zoom)
++            fun x(lon: Double) = floor((lon + 180) / 360 * n).toLong().coerceIn(0, n.toLong() - 1)
++            fun y(lat: Double) = floor((1 - ln(tan(PI / 4 + Math.toRadians(lat) / 2)) / PI) / 2 * n)
++                .toLong().coerceIn(0, n.toLong() - 1)
++            total += (x(east) - x(west) + 1) * (y(south) - y(north) + 1)
++            if (total > MAX_TILE_ESTIMATE) return total
++        }
++        return total
++    }
++
++    private fun label(parent: LinearLayout, value: String, size: Float = 14f): TextView = TextView(activity).apply {
++        text = value; textSize = size; typeface = AppTypography.body
++        setTextColor(Color.rgb(40, 74, 53))
++        parent.addView(this, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
++    }
++
++    private fun button(parent: LinearLayout, value: String, action: () -> Unit): Button = Button(activity).apply {
++        text = value; isAllCaps = false; typeface = AppTypography.emphasis
++        setTextColor(Color.rgb(25, 87, 42))
++        setOnClickListener { if (!closed) action() }
++        parent.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
++    }
++
++    private fun cardBackground() = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
++        intArrayOf(Color.rgb(255, 255, 246), Color.rgb(230, 238, 218))).apply {
++        cornerRadius = dp(16).toFloat(); setStroke(dp(1), Color.rgb(184, 202, 167))
++    }
++    private fun toast(message: String) { if (!closed && !activity.isFinishing) Toast.makeText(activity, message, Toast.LENGTH_LONG).show() }
++    private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
++
++    companion object {
++        private const val OWNER = "wtt-offline-v1"
++        private const val MAX_ZOOM = 16
++        private const val MAX_TILE_ESTIMATE = 15_000L
++        private const val FREE_SPACE_RESERVE = 150L * 1024 * 1024
++    }
++}
+--- /dev/null
++++ b/app/src/main/java/com/lifeinmist/app/SeaRevealController.kt
+@@ -0,0 +1,66 @@
++package com.lifeinmist.app
++
++import android.os.Handler
++import android.os.Looper
++import org.maplibre.android.geometry.LatLng
++import org.maplibre.android.maps.MapLibreMap
++import org.maplibre.android.style.expressions.Expression
++import org.maplibre.android.style.sources.VectorSource
++import org.maplibre.geojson.MultiPolygon
++import org.maplibre.geojson.Polygon
++
++/** Ocean geometry comes from the same loaded tiles as the map, including offline tiles. */
++data class SeaPolygon(val rings: List<List<LatLng>>)
++
++class SeaRevealController(private val map: MapLibreMap, private val fog: FogOverlay) {
++    private val handler = Handler(Looper.getMainLooper())
++    private var moving = false
++    private var closed = false
++    private var scheduled = false
++    private val refresh = Runnable {
++        scheduled = false
++        if (!closed && !moving) readOcean()
++    }
++
++    fun onCameraMove() {
++        moving = true
++        handler.removeCallbacks(refresh)
++        scheduled = false
++    }
++
++    fun onCameraIdle() { moving = false; requestRefresh() }
++
++    fun requestRefresh() {
++        if (closed || moving || scheduled) return
++        scheduled = true
++        handler.postDelayed(refresh, 180)
++    }
++
++    private fun readOcean() {
++        val style = map.style ?: return
++        if (!style.isFullyLoaded) return
++        val result = runCatching {
++            val polygons = ArrayList<SeaPolygon>()
++            for (source in style.sources.filterIsInstance<VectorSource>()) {
++                val features = source.querySourceFeatures(arrayOf("water"),
++                    Expression.eq(Expression.get("class"), Expression.literal("ocean")))
++                for (feature in features) {
++                    val parts = when (val geometry = feature.geometry()) {
++                        is Polygon -> listOf(geometry.coordinates())
++                        is MultiPolygon -> geometry.coordinates()
++                        else -> continue
++                    }
++                    for (part in parts) {
++                        val rings = part.map { ring -> ring.map { LatLng(it.latitude(), it.longitude()) } }
++                        if (rings.isNotEmpty() && rings.first().size >= 3) polygons.add(SeaPolygon(rings))
++                    }
++                }
++            }
++            polygons
++        }
++        // A transient loading failure must not replace the last valid geometry.
++        result.onSuccess { fog.setSeaPolygons(it) }
++    }
++
++    fun close() { closed = true; handler.removeCallbacks(refresh) }
++}
 --- a/app/src/main/java/com/lifeinmist/app/TrackingService.kt
 +++ b/app/src/main/java/com/lifeinmist/app/TrackingService.kt
 @@ -8,6 +8,7 @@
