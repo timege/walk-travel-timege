@@ -45,6 +45,15 @@
 +- Remove all imported places and discovery history with confirmation.
 +- Walk history, explored map data and GPX routes are preserved.
 +- Uses the existing persistent Android signing key for in-place updates.
+--- /dev/null
++++ b/RELEASE_0.9.5.md
+@@ -0,0 +1,6 @@
++# Walk Travel Timege 0.9.5 (44)
++
++- Place names are visible before discovery in the list, detail card, and navigation target.
++- Previously imported Samui names are corrected from the saved article-title export by article URL. Place IDs, coordinates, and discovery history are preserved; no places are added.
++- GPS position marker is sky blue with a glossy highlight, white rim, blue halo, and a soft shadow. The sprite remains cached.
++- Map styles and fog reveal rules are unchanged. Water visibility and 50 m previews remain proposals.
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -10,8 +10,8 @@
@@ -53,8 +62,8 @@
          targetSdk = 36
 -        versionCode = 41
 -        versionName = "0.9.2"
-+        versionCode = 43
-+        versionName = "0.9.4"
++        versionCode = 44
++        versionName = "0.9.5"
      }
  
      // Always use the persistent debug keystore restored by GitHub Actions.
@@ -78,9 +87,70 @@
          <service
              android:name=".TrackingService"
              android:exported="false"
+--- /dev/null
++++ b/app/src/main/assets/place_article_titles.json
+@@ -0,0 +1,29 @@
++{
++  "https://normalthai.ru/lamai-beach": "🏝 Пляж Ламаи на Самуи — подробный обзор, фото и советы",
++  "https://normalthai.ru/plyazh-bang-po-samui": "Пляж Банг По на Самуи — прозрачная вода, спокойствие и лучшие виды",
++  "https://normalthai.ru/choeng-mon-beach": "Пляж Чонг Мон на Самуи — как добраться, отзывы, фото и видео",
++  "https://normalthai.ru/plyazh-buhty-laem": "Пляж Лаем Яй (Laem Yai beach)",
++  "https://normalthai.ru/silver-beach": "Кристал Бей Самуи — пляж, как на открытках",
++  "https://normalthai.ru/bantaisamui": "Пляж Бан Тай (Ban Tai Beach)",
++  "https://normalthai.ru/taling-ngam-beach": "Пляж Талинг Нгам (Taling Ngam beach)",
++  "https://normalthai.ru/nathon-beach": "Пляж Натон (Nathon Beach)",
++  "https://normalthai.ru/laem-set-beach": "Пляж Лаем Сет (Laem Set Beach)",
++  "https://normalthai.ru/plyazh-tong-krut": "Пляж Тонг Крут (Thong Krut)",
++  "https://normalthai.ru/plai-laem-samui": "Пляж Плай-Лаем (Plai Laem Beach)",
++  "https://normalthai.ru/beach-natien": "Пляж Натьен (Natien beach)",
++  "https://normalthai.ru/plyazh-bophut-koh-samui": "Пляж Бопхут (Bo Phut Beach)",
++  "https://normalthai.ru/krasnyj-hram-wat-ratchathammaram": "Красный храм Wat Ratchathammaram",
++  "https://normalthai.ru/vodopad-namuang-2": "Водопад Намуанг и Намуанг-2",
++  "https://normalthai.ru/bejbi-budda": "Бейби Будда Самуи (Wat Khao Cheddi)",
++  "https://normalthai.ru/pagoda-laem-sor": "Пагода Лаем Сор (Laem Sor Pagoda)",
++  "https://normalthai.ru/hua-thanon-beach": "Пляж Хуа-Танон (Hua Thanon beach)",
++  "https://normalthai.ru/chto-posmotret-na-samui": "Что посмотреть на Самуи самостоятельно — достопримечательности острова",
++  "https://normalthai.ru/smotrovye-samui": "Смотровые площадки на Самуи — лучшие виды, закаты и точки для фото 🌅",
++  "https://normalthai.ru/maenamsamui": "Пляж Маенам (Maenam Beach)",
++  "https://normalthai.ru/buddasamui": "Стоячий Будда в горах Самуи",
++  "https://normalthai.ru/plyazh-tong-plu-samui": "Пляж Тонг Плу (Thong Plu Beach)",
++  "https://normalthai.ru/lipa-noi-beach": "Пляж Липа Ной (Lipa Noi beach)",
++  "https://normalthai.ru/coral-cove": "Пляж Корал Ков (Coral Cove)",
++  "https://normalthai.ru/thong-tanote-beach": "Пляж Тонг Танот (Thong Tanote beach)",
++  "https://normalthai.ru/samrong-beach": "Пляж Самронг (Samrong Beach)"
++}
 --- a/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt
 +++ b/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt
-@@ -34,6 +34,13 @@
+@@ -28,12 +28,42 @@
+ /** Shared by the activity and tracking service. No location is sent to the server. */
+ class DiscoveryStore private constructor(context: Context) {
+     private val prefs = context.applicationContext.getSharedPreferences("discoveries", Context.MODE_PRIVATE)
++    // Titles from the previously verified Samui article export. Update existing imports
++    // in place: keep IDs, coordinates, discovery dates, and the rest of each record.
++    private val articleTitles: JSONObject = runCatching {
++        context.applicationContext.assets.open("place_article_titles.json").bufferedReader().use {
++            JSONObject(it.readText())
++        }
++    }.getOrElse { JSONObject() }
+     private var catalog = parseCatalog(prefs.getString("catalog", null) ?: "{\"version\":1,\"places\":[]}")
+     private var found = JSONObject(prefs.getString("found", "{}") ?: "{}")
++
++    init {
++        val updated = catalog.map(::withArticleTitle)
++        if (updated != catalog) {
++            catalog = updated
++            persist()
++        }
++    }
++
++    private fun withArticleTitle(place: DiscoveryPlace): DiscoveryPlace {
++        val key = place.article.substringBefore('#').substringBefore('?').trimEnd('/')
++        val title = articleTitles.optString(key).trim()
++        return if (title.isNotEmpty() && title.length <= 200 && title != place.name) {
++            place.copy(name = title)
++        } else place
++    }
+ 
      @Synchronized fun places(): List<DiscoveryPlace> = catalog.toList()
      @Synchronized fun place(id: String): DiscoveryPlace? = catalog.firstOrNull { it.id == id }
      @Synchronized fun openedAt(id: String): Long = found.optLong(id, 0)
@@ -94,9 +164,34 @@
  
      @Synchronized fun openedBetween(startedAt: Long, endedAt: Long): List<DiscoveryPlace> =
          catalog.filter { place ->
+@@ -42,7 +72,7 @@
+         }.sortedBy { openedAt(it.id) }
+ 
+     @Synchronized fun install(raw: String): Int {
+-        val incoming = parseCatalog(raw)
++        val incoming = parseCatalog(raw).map(::withArticleTitle)
+         // Keep discovered cards even if a publisher later removes them from the feed.
+         val ids = incoming.map { it.id }.toSet()
+         catalog = incoming + catalog.filter { openedAt(it.id) > 0 && it.id !in ids }
+@@ -76,7 +106,7 @@
+ 
+     @Synchronized fun restore(data: JSONObject) {
+         validateBackup(data)
+-        val saved = parseCatalog(data.getJSONObject("catalog").toString())
++        val saved = parseCatalog(data.getJSONObject("catalog").toString()).map(::withArticleTitle)
+         val existing = catalog.map { it.id }.toSet()
+         catalog = catalog + saved.filter { it.id !in existing }
+         val values = data.getJSONObject("found")
 --- a/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt
 +++ b/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt
-@@ -89,10 +89,35 @@
+@@ -83,23 +83,48 @@
+             group.sortedBy { place -> location()?.let { place.distance(it.latitude, it.longitude) } ?: Float.MAX_VALUE }
+                 .forEach { place ->
+                     val unlockedHere = store.openedAt(place.id) > 0
+-                    val title = if (unlockedHere) "✓  ${place.name}" else "?  ${place.category}"
++                    val title = if (unlockedHere) "✓  ${place.name}" else "?  ${place.name}"
+                     placeRowButton(content, title, unlockedHere) { dialog.dismiss(); showCard(place) }
+                 }
          }
          actionButton(content, tr("Refresh places", "Обновить места")) { dialog.dismiss(); sync(true) }
          actionButton(content, tr("Import places", "Загрузить подборку")) { dialog.dismiss(); importFile() }
@@ -132,6 +227,23 @@
  
      fun showCard(place: DiscoveryPlace) {
          val date = store.openedAt(place.id)
+         val unlocked = date > 0
+         val content = column()
+         val dialog = AlertDialog.Builder(activity)
+-            .setCustomTitle(titleView(if (unlocked) place.name else tr("A discovery awaits", "Место ждёт открытия")))
++            .setCustomTitle(titleView(place.name))
+             .setView(ScrollView(activity).apply { addView(content) })
+             .setNegativeButton(tr("Close", "Закрыть"), null).create()
+         metaText(content, "${place.category} · ${place.region}")
+@@ -158,7 +183,7 @@
+         secondaryButton(content, tr("Show on map", "Показать на карте")) { dialog.dismiss(); showOnMap(place) }
+         primaryButton(content, tr("Walk here", "Выбрать целью прогулки")) {
+             dialog.dismiss()
+-            chooseGoal(place, if (unlocked) place.name else place.category)
++            chooseGoal(place, place.name)
+         }
+         dialog.show()
+         roundCard(dialog)
 --- a/app/src/main/java/com/lifeinmist/app/MainActivity.kt
 +++ b/app/src/main/java/com/lifeinmist/app/MainActivity.kt
 @@ -263,6 +263,7 @@
@@ -201,6 +313,57 @@
      fun walks(): List<WalkRecord> {
          val result = ArrayList<WalkRecord>()
          readableDatabase.rawQuery(
+--- a/app/src/main/java/com/lifeinmist/app/NavigationOverlay.kt
++++ b/app/src/main/java/com/lifeinmist/app/NavigationOverlay.kt
+@@ -163,8 +163,8 @@
+                 p.y,
+                 haloRadius,
+                 intArrayOf(
+-                    Color.argb(82, 82, 235, 100),
+-                    Color.argb(36, 101, 235, 116),
++                    Color.argb(72, 74, 180, 255),
++                    Color.argb(30, 117, 208, 255),
+                     Color.TRANSPARENT
+                 ),
+                 floatArrayOf(0f, 0.56f, 1f),
+@@ -174,7 +174,7 @@
+         canvas.drawCircle(p.x, p.y, haloRadius, halo)
+ 
+         val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+-            color = Color.argb(118, 77, 225, 90)
++            color = Color.argb(108, 62, 175, 247)
+             maskFilter = BlurMaskFilter(dp(8f), BlurMaskFilter.Blur.NORMAL)
+         }
+         canvas.drawCircle(p.x, p.y, glowRadius, glow)
+@@ -182,6 +182,7 @@
+         val outer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+             style = Paint.Style.FILL
+             color = Color.WHITE
++            setShadowLayer(dp(3f), 0f, dp(2f), Color.argb(85, 21, 67, 105))
+         }
+         canvas.drawCircle(p.x, p.y, dp(13f), outer)
+ 
+@@ -191,12 +192,19 @@
+                 p.x - dp(3f),
+                 p.y - dp(4f),
+                 dp(11f),
+-                intArrayOf(Color.rgb(105, 239, 70), Color.rgb(25, 171, 54)),
++                intArrayOf(Color.rgb(163, 230, 255), Color.rgb(55, 170, 239), Color.rgb(17, 102, 181)),
+                 null,
+                 Shader.TileMode.CLAMP
+             )
+         }
+         canvas.drawCircle(p.x, p.y, dp(9f), dot)
++
++        // Small upper highlight makes the blue position marker read as a glossy bead.
++        val highlight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            shader = RadialGradient(p.x - dp(2.5f), p.y - dp(4f), dp(4.5f),
++                Color.argb(190, 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP)
++        }
++        canvas.drawOval(p.x - dp(6f), p.y - dp(7f), p.x + dp(2f), p.y - dp(1f), highlight)
+     }
+ 
+     private fun drawDestination(canvas: Canvas, currentMap: MapLibreMap, location: LatLng) {
 --- a/app/src/main/java/com/lifeinmist/app/TrackingService.kt
 +++ b/app/src/main/java/com/lifeinmist/app/TrackingService.kt
 @@ -8,6 +8,7 @@
