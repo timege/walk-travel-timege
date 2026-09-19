@@ -25,6 +25,14 @@ jobs:
           test -f android-src/settings.gradle.kts
           test -f android-src/app/build.gradle.kts
 
+      - name: Inspect POI import source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "========== POI SOURCE MATCHES =========="
+          grep -RInE "Загрузить подборку|Load collection|radius_m|article_url|ActivityResultContracts|интересн|places" android-src/app/src/main 2>/dev/null | head -300 || true
+          echo "========================================"
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
