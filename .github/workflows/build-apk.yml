@@ -24,6 +24,8 @@ jobs:
           unzip -q walk-travel-timege-source.zip -d android-src
           test -f android-src/settings.gradle.kts
           test -f android-src/app/build.gradle.kts
+          git apply --check --directory=android-src patches/latest.patch
+          git apply --directory=android-src patches/latest.patch
 
       - name: Apply POI clear-all feature
         shell: bash
