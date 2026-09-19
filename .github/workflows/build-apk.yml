@@ -25,17 +25,71 @@ jobs:
           test -f android-src/settings.gradle.kts
           test -f android-src/app/build.gradle.kts
 
-      - name: Inspect POI import source
+      - name: Apply POI clear-all feature
         shell: bash
         run: |
           set -euo pipefail
-          echo "========== DiscoveryStore 107-155 =========="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt | sed -n '107,155p'
-          echo "========== DiscoveryUi 1-150 ==============="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt | sed -n '1,150p'
-          echo "========== MainActivity 80-110 ============="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/MainActivity.kt | sed -n '80,110p'
-          echo "============================================="
+          python3 - <<'PY'
+          from pathlib import Path
+
+          store_path = Path("android-src/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt")
+          store = store_path.read_text(encoding="utf-8")
+          if "fun clearAllPlaces()" not in store:
+              needle = '    @Synchronized fun openedAt(id: String): Long = found.optLong(id, 0)\n'
+              insert = needle + '''
+          
+              @Synchronized fun clearAllPlaces() {
+                  catalog = emptyList()
+                  found = JSONObject()
+                  persist()
+              }
+          '''
+              if needle not in store:
+                  raise SystemExit("DiscoveryStore insertion point not found")
+              store = store.replace(needle, insert, 1)
+              store_path.write_text(store, encoding="utf-8")
+
+          ui_path = Path("android-src/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt")
+          ui = ui_path.read_text(encoding="utf-8")
+          if 'tr("Remove all places", "Удалить все интересные места")' not in ui:
+              needle = '        actionButton(content, tr("Import places", "Загрузить подборку")) { dialog.dismiss(); importFile() }\n'
+              insert = needle + '''        if (places.isNotEmpty()) {
+              actionButton(content, tr("Remove all places", "Удалить все интересные места")) {
+                  dialog.dismiss()
+                  confirmClearAll()
+              }
+          }
+          '''
+              if needle not in ui:
+                  raise SystemExit("DiscoveryUi button insertion point not found")
+              ui = ui.replace(needle, insert, 1)
+
+              method_marker = '    fun showCard(place: DiscoveryPlace) {\n'
+              method = '''    private fun confirmClearAll() {
+              val dialog = AlertDialog.Builder(activity)
+                  .setCustomTitle(titleView(tr("Remove all places?", "Удалить все интересные места?")))
+                  .setMessage(tr(
+                      "This removes all imported places and their discovery history. Walks, explored map data and GPX routes will not be affected.",
+                      "Будут удалены все интересные места и история их открытий. Прогулки, открытая карта и GPX-маршруты останутся без изменений."
+                  ))
+                  .setNegativeButton(tr("Cancel", "Отмена"), null)
+                  .setPositiveButton(tr("Remove", "Удалить")) { _, _ ->
+                      store.clearAllPlaces()
+                      refresh()
+                      Toast.makeText(activity, tr("All places removed", "Все интересные места удалены"), Toast.LENGTH_SHORT).show()
+                  }
+                  .create()
+              dialog.show()
+              roundCard(dialog)
+              tintNegativeButton(dialog)
+          }
+
+          '''
+              if method_marker not in ui:
+                  raise SystemExit("DiscoveryUi method insertion point not found")
+              ui = ui.replace(method_marker, method + method_marker, 1)
+              ui_path.write_text(ui, encoding="utf-8")
+          PY
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
