@@ -798,17 +798,17 @@
 +    private var loading = false
 +    private var creating = false
 +    private var closed = false
-+    private var foreground = false
++    private var appForeground = false
 +    private var updateScheduled = false
 +    private val updateRows = Runnable {
 +        updateScheduled = false
 +        if (!closed) entries.values.forEach(::updateRow)
 +    }
 +
-+    fun onStart() { foreground = true; scheduleUpdate() }
++    fun onStart() { appForeground = true; scheduleUpdate() }
 +
 +    fun onStop() {
-+        foreground = false
++        appForeground = false
 +        entries.values.filter { it.active }.forEach(::pause)
 +    }
 +
@@ -926,11 +926,11 @@
 +            val wasActive = entry.active
 +            entry.error = false
 +            pause(entry)
-+            if (wasActive && foreground) toast(tr("Map saved: ${entry.name}", "Карта сохранена: ${entry.name}"))
++            if (wasActive && appForeground) toast(tr("Map saved: ${entry.name}", "Карта сохранена: ${entry.name}"))
 +        } else if (entry.active && activity.filesDir.usableSpace < FREE_SPACE_RESERVE) {
 +            entry.error = true
 +            pause(entry)
-+            if (foreground) toast(tr("Not enough free space. Download paused.", "Мало свободной памяти. Загрузка приостановлена."))
++            if (appForeground) toast(tr("Not enough free space. Download paused.", "Мало свободной памяти. Загрузка приостановлена."))
 +        }
 +        scheduleUpdate()
 +    }
@@ -944,7 +944,7 @@
 +    }
 +
 +    private fun resume(entry: Entry) {
-+        if (!foreground || !isCurrent(entry) || complete(entry.status)) return
++        if (!appForeground || !isCurrent(entry) || complete(entry.status)) return
 +        if (StatFs(activity.filesDir.absolutePath).availableBytes < FREE_SPACE_RESERVE) {
 +            toast(tr("Free some storage before downloading.", "Освободите память перед загрузкой.")); return
 +        }
@@ -1023,12 +1023,12 @@
 +        entry.toggleView?.apply {
 +            text = if (entry.active) tr("Pause", "Пауза") else tr("Continue download", "Продолжить загрузку")
 +            visibility = if (done) View.GONE else View.VISIBLE
-+            isEnabled = !entry.deleting && foreground
++            isEnabled = !entry.deleting && appForeground
 +        }
 +    }
 +
 +    private fun confirmDownload() {
-+        if (closed || creating || !foreground) return
++        if (closed || creating || !appForeground) return
 +        val currentMap = map() ?: return
 +        if (currentMap.style?.isFullyLoaded != true) {
 +            toast(tr("Wait for the map to load first.", "Дождитесь загрузки карты.")); return
@@ -1069,7 +1069,7 @@
 +    }
 +
 +    private fun createRegion(name: String, bounds: LatLngBounds) {
-+        if (closed || creating || !foreground) return
++        if (closed || creating || !appForeground) return
 +        if (activity.filesDir.usableSpace < FREE_SPACE_RESERVE) {
 +            toast(tr("Free some storage before downloading.", "Освободите память перед загрузкой.")); return
 +        }
@@ -1083,11 +1083,11 @@
 +                creating = false
 +                if (closed) { offlineRegion.setDownloadState(OfflineRegion.STATE_INACTIVE); return }
 +                val entry = addRegion(offlineRegion, name)
-+                if (foreground) { resume(entry); show() }
++                if (appForeground) { resume(entry); show() }
 +            }
 +            override fun onError(error: String) {
 +                creating = false
-+                if (!closed && foreground) { toast(tr("Could not create the download. Try again.", "Не удалось начать загрузку. Попробуйте ещё раз.")); show() }
++                if (!closed && appForeground) { toast(tr("Could not create the download. Try again.", "Не удалось начать загрузку. Попробуйте ещё раз.")); show() }
 +            }
 +        })
 +    }
