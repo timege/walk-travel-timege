@@ -29,13 +29,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "========== DiscoveryStore.kt =========="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt | sed -n '1,220p'
-          echo "========== DiscoveryUi.kt ============="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt | sed -n '1,220p'
-          echo "========== MainActivity import ========="
-          nl -ba android-src/app/src/main/java/com/lifeinmist/app/MainActivity.kt | sed -n '70,115p'
-          echo "========================================"
+          echo "========== DiscoveryStore 107-155 =========="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryStore.kt | sed -n '107,155p'
+          echo "========== DiscoveryUi 1-150 ==============="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/DiscoveryUi.kt | sed -n '1,150p'
+          echo "========== MainActivity 80-110 ============="
+          nl -ba android-src/app/src/main/java/com/lifeinmist/app/MainActivity.kt | sed -n '80,110p'
+          echo "============================================="
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
