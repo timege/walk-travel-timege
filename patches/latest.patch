@@ -1,3 +1,18 @@
+--- /dev/null
++++ b/PENDING_CHANGES.md
+@@ -0,0 +1,12 @@
++# Pending changes after 0.9.5 — not compiled
++
++- The places list shows a plain title for unvisited places and a check mark for visited places. Map markers retain ? / ✓.
++- All catalog places get a 75-metre transparent preview with a soft outer edge (up to 10 metres). The preview is only part of the fog bitmap and never changes visits, recorded walks, explored territory, or discovery radius.
++- Preview centers refresh on initial load, file import, website sync, clear-all, backup restore, and resume. Deleted places lose their preview; genuinely walked areas remain.
++- Preview circles share the existing cached mask and its pan/zoom/rotation transform; points outside the cache are skipped. No fixed screen-pixel minimum is used for these circles.
++
++Compilation and main-branch updates require the user's explicit confirmation. Do not dispatch a workflow or move this draft to main yet.
++
++Unresolved discussion: visible sea/coastline, grouping crowded map markers, whether both map styles are useful, and offline maps. These are not implemented in this draft.
++
++Validation: source/diff review only. Not compiled or tested on Android.
 --- a/README.md
 +++ b/README.md
 @@ -1,3 +1,10 @@
@@ -189,7 +204,7 @@
                  .forEach { place ->
                      val unlockedHere = store.openedAt(place.id) > 0
 -                    val title = if (unlockedHere) "✓  ${place.name}" else "?  ${place.category}"
-+                    val title = if (unlockedHere) "✓  ${place.name}" else "?  ${place.name}"
++                    val title = if (unlockedHere) "✓  ${place.name}" else place.name
                      placeRowButton(content, title, unlockedHere) { dialog.dismiss(); showCard(place) }
                  }
          }
@@ -244,9 +259,125 @@
          }
          dialog.show()
          roundCard(dialog)
+--- a/app/src/main/java/com/lifeinmist/app/FogOverlay.kt
++++ b/app/src/main/java/com/lifeinmist/app/FogOverlay.kt
+@@ -41,6 +41,8 @@
+     private var trackSegments: Collection<List<TrackPoint>> = emptyList()
+     private var trackChunks: List<List<TrackChunk>> = emptyList()
+     private var currentLocation: LatLng? = null
++    // Visual hints only. These centers never enter track data or the progress database.
++    private var placePreviewCenters: List<LatLng> = emptyList()
+ 
+     private var cacheBitmap: Bitmap? = null
+     private var spareBitmap: Bitmap? = null
+@@ -186,6 +188,13 @@
+         markDirty()
+     }
+ 
++    fun setPlacePreviews(places: List<DiscoveryPlace>) {
++        val centers = places.map { LatLng(it.lat, it.lon) }
++        if (placePreviewCenters == centers) return
++        placePreviewCenters = centers
++        markDirty()
++    }
++
+     fun setCurrentLocation(location: LatLng?) {
+         if (currentLocation == location) return
+         currentLocation = location
+@@ -371,6 +380,7 @@
+         // This canvas already targets an isolated bitmap; an extra layer doubles work.
+         drawUniformMask(offscreen, cacheW, cacheH)
+         if (track.isNotEmpty()) drawExploredRoutes(offscreen, currentMap, cacheW, cacheH)
++        drawPlacePreviews(offscreen, currentMap, cacheW, cacheH)
+         currentLocation?.let { drawTemporaryOpening(offscreen, currentMap, it, cacheW, cacheH) }
+ 
+         val old = cacheBitmap
+@@ -437,6 +447,29 @@
+                 val p = screenToCache(screen.x, screen.y, cacheW, cacheH)
+                 clearCircle(canvas, p.first, p.second, representativeRadiusPx)
+             }
++        }
++    }
++
++    private fun drawPlacePreviews(canvas: Canvas, currentMap: MapLibreMap, cacheW: Int, cacheH: Int) {
++        for (center in placePreviewCenters) {
++            val screen = currentMap.projection.toScreenLocation(center)
++            // Keep the radius geographic: no minimum screen size that would reveal
++            // kilometres around a point when the user zooms out to the whole island.
++            val north = currentMap.projection.toScreenLocation(LatLng(
++                center.latitude + Math.toDegrees(PLACE_PREVIEW_RADIUS_M / 6_378_137.0),
++                center.longitude
++            ))
++            val radius = hypot(screen.x - north.x, screen.y - north.y) * CACHE_PIXEL_SCALE
++            if (!radius.isFinite() || radius <= 0f) continue
++            val x = (screen.x - cacheOriginX) * CACHE_PIXEL_SCALE + cacheW / 2f
++            val y = (screen.y - cacheOriginY) * CACHE_PIXEL_SCALE + cacheH / 2f
++            if (!x.isFinite() || !y.isFinite()) continue
++            // Feather extends by at most 10 geographic metres, with a small pixel cap.
++            val feather = (radius * (PLACE_PREVIEW_FEATHER_M / PLACE_PREVIEW_RADIUS_M).toFloat())
++                .coerceAtMost(FEATHER_EXTRA_PX)
++            val reach = radius + feather
++            if (x + reach < 0f || y + reach < 0f || x - reach > cacheW || y - reach > cacheH) continue
++            clearCircle(canvas, x, y, radius, feather)
+         }
+     }
+ 
+@@ -464,12 +497,12 @@
+         return cx to cy
+     }
+ 
+-    private fun clearCircle(canvas: Canvas, x: Float, y: Float, radius: Float) {
++    private fun clearCircle(canvas: Canvas, x: Float, y: Float, radius: Float, feather: Float = FEATHER_EXTRA_PX) {
+         for (i in FEATHER_STEPS downTo 1) {
+             val t = i / FEATHER_STEPS.toFloat()
+             softCirclePaint.alpha = (FEATHER_MAX_ALPHA * (1f - t)).toInt()
+                 .coerceIn(1, FEATHER_MAX_ALPHA)
+-            canvas.drawCircle(x, y, radius + t * FEATHER_EXTRA_PX, softCirclePaint)
++            canvas.drawCircle(x, y, radius + t * feather, softCirclePaint)
+         }
+         canvas.drawCircle(x, y, radius, clearCirclePaint)
+         softCirclePaint.alpha = 255
+@@ -485,6 +518,8 @@
+     companion object {
+         private const val REVEAL_RADIUS_M = 30.0
+         private const val CURRENT_OPENING_RADIUS_M = 44.0
++        private const val PLACE_PREVIEW_RADIUS_M = 75.0
++        private const val PLACE_PREVIEW_FEATHER_M = 10.0
+         private const val FEATHER_EXTRA_PX = 22f
+         private const val FEATHER_STEPS = 8
+         private const val FEATHER_MAX_ALPHA = 54
 --- a/app/src/main/java/com/lifeinmist/app/MainActivity.kt
 +++ b/app/src/main/java/com/lifeinmist/app/MainActivity.kt
-@@ -263,6 +263,7 @@
+@@ -90,7 +90,7 @@
+             }
+             runOnUiThread {
+                 if (!isFinishing && !isDestroyed) {
+-                    discoveryOverlay.invalidate()
++                    refreshPlaces()
+                     Toast.makeText(this, result.fold({ tr("Places imported: $it", "Загружено мест: $it") }, {
+                         tr("Could not import places. Check the file format.", "Не удалось загрузить места. Проверьте формат файла.")
+                     }), Toast.LENGTH_LONG).show()
+@@ -174,7 +174,7 @@
+                     val persistedExplored = database.exploredPoints()
+                     refreshClouds(reset = true)
+                     cloudOverlay.postInvalidateOnAnimation()
+-                    discoveryOverlay.invalidate()
++                    refreshPlaces()
+                     navigationOverlay.postInvalidateOnAnimation()
+                     if (persistedExplored.isNotEmpty()) focusOnExploredArea()
+                     Toast.makeText(
+@@ -243,8 +243,9 @@
+             selectDestination(SearchPlace(title, place.lat, place.lon))
+         }, { place ->
+             map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(place.lat, place.lon), 16.0))
+-        }, { discoveryOverlay.invalidate() }, { importPlacesLauncher.launch(arrayOf("application/json", "text/*")) })
++        }, { refreshPlaces() }, { importPlacesLauncher.launch(arrayOf("application/json", "text/*")) })
+         discoveryOverlay.onPlaceClick = { discoveryUi.showCard(it) }
++        refreshPlaces()
+         gpxUi = GpxUi(this, ::showImportedRoute)
+         val retained = lastCustomNonConfigurationInstance as? RetainedMapState
+         if (retained == null) gpxUi.restoreRoute() else {
+@@ -263,6 +264,7 @@
          updateUiState()
          discoveryUi.sync()
          handleDiscoveryIntent(intent)
@@ -254,7 +385,7 @@
      }
  
      private fun buildUi(savedInstanceState: Bundle?) {
-@@ -685,6 +686,7 @@
+@@ -685,6 +687,7 @@
                  if ((index == 1) != AppLanguage.isRussian) {
                      AppLanguage.select(this, index == 1)
                      if (tracking) startService(Intent(this, TrackingService::class.java).setAction(TrackingService.ACTION_LANGUAGE))
@@ -262,7 +393,7 @@
                      recreate()
                  }
              }.setNegativeButton(tr("Cancel", "Отмена"), null).show()
-@@ -928,6 +930,13 @@
+@@ -928,6 +931,13 @@
          DiscoveryStore.get(this).place(id)?.let { discoveryUi.showCard(it) }
      }
  
@@ -276,7 +407,19 @@
      private fun formatDuration(durationMs: Long): String {
          val positive = durationMs.coerceAtLeast(0L)
          val minutes = if (positive == 0L) 0 else ((positive + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
-@@ -1605,6 +1614,7 @@
+@@ -1060,6 +1070,11 @@
+         cloudOverlay.setCurrentLocation(position)
+         navigationOverlay.setCurrentLocation(position)
+         if (follow) map?.animateCamera(CameraUpdateFactory.newLatLngZoom(position, 16.2))
++    }
++
++    private fun refreshPlaces() {
++        cloudOverlay.setPlacePreviews(DiscoveryStore.get(this).places())
++        discoveryOverlay.invalidate()
+     }
+ 
+     private fun refreshClouds(reset: Boolean = false) {
+@@ -1605,6 +1620,7 @@
          super.onNewIntent(intent)
          setIntent(intent)
          handleDiscoveryIntent(intent)
@@ -284,7 +427,16 @@
      }
  
      override fun onResume() {
-@@ -1664,6 +1674,7 @@
+@@ -1614,7 +1630,7 @@
+         tracking = database.activeWalk() != null
+         updateUiState()
+         refreshClouds()
+-        discoveryOverlay.invalidate()
++        refreshPlaces()
+         if (pendingWalkSummaryId > 0) {
+             val id = pendingWalkSummaryId
+             pendingWalkSummaryId = -1L
+@@ -1664,6 +1680,7 @@
      }
  
      companion object {
