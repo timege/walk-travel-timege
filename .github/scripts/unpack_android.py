@@ -28,4 +28,4 @@ def unpack(archive: Path, destination: Path) -> None:
 
 
 if __name__ == "__main__":
-    unpack(Path("walk-travel-timege-source.zip"), Path("android-src"))
+    unpack(Path("walk-travel-source.zip"), Path("android-src"))
